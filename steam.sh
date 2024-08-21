@@ -4,19 +4,25 @@ SCREEN_WIDTH=3840
 SCREEN_HEIGHT=2160
 OUTPUT_DEVICE="*,DP-1"
 CLIENTCMD="steam -gamepadui -steamos3 -steampal -steamdeck $@"
+CURSOR_FILE="/usr/share/icons/Adwaita/cursors/arrow"
 
+# if wpaperd is enabled
 _WPAPERD_MANUALLY_CLOSED=0
 if systemctl --user is-active wpaperd-hypr >/dev/null; then
   systemctl --user stop wpaperd-hypr
   _WPAPERD_MANUALLY_CLOSED=1
 fi
 
-hyprctl --batch "\
-  keyword animations:enabled 0;
-  keyword decoration:drop_shadow 0;
-  keyword decoration:blur:enabled 0"
+_HYPRCTL_OFF=0
+if command -v hyprctl >/dev/null; then
+  hyprctl --batch "\
+    keyword animations:enabled 0;
+    keyword decoration:drop_shadow 0;
+    keyword decoration:blur:enabled 0"
+  _HYPRCTL_OFF=1
+fi
 
-
+export QT_QPA_PLATFORM=xcb
 export ENABLE_GAMESCOPE_WSI=1
 export SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS=0
 export STEAM_GAMESCOPE_VRR_SUPPORTED=1
@@ -40,14 +46,8 @@ export SRT_URLOPEN_PREFER_STEAM=1
 # Disable automatic audio device switching in steam, now handled by wireplumber
 export STEAM_DISABLE_AUDIO_DEVICE_SWITCHING=1
 
-# We have the Mesa integration for the fifo-based dynamic fps-limiter
-export STEAM_GAMESCOPE_DYNAMIC_FPSLIMITER=1
-
 # We have NIS support
 export STEAM_GAMESCOPE_NIS_SUPPORTED=1
-
-# Let steam know it can unmount drives without superuser privileges
-export STEAM_ALLOW_DRIVE_UNMOUNT=1
 
 # Scaling support
 export STEAM_GAMESCOPE_FANCY_SCALING_SUPPORT=1
@@ -81,14 +81,35 @@ export vk_xwayland_wait_ready=false
 export QT_IM_MODULE=steam
 export GTK_IM_MODULE=Steam
 
+# Workaround for steam getting killed immediatly during reboot
+export STEAMOS_STEAM_REBOOT_SENTINEL="/tmp/steamos-reboot-sentinel"
+export REBOOT_SENTINEL=$STEAMOS_STEAM_REBOOT_SENTINEL
+# Workaround for steam getting killed immediatly during shutdown
+# Same idea as reboot sentinel above
+export STEAMOS_STEAM_SHUTDOWN_SENTINEL="/tmp/steamos-shutdown-sentinel"
+export SHUTDOWN_SENTINEL=$STEAMOS_STEAM_SHUTDOWN_SENTINEL
+
 # Enable Mangoapp
 export STEAM_USE_MANGOAPP=1
 #export MANGOHUD=1
 export MANGOHUD_CONFIGFILE="$(mktemp -t "mangohud-cfg-XXX")"
-cat $HOME/.config/MangoHud/MangoHud.conf > $MANGOHUD_CONFIGFILE
+# Use user configs
+if [ -r $HOME/.config/MangoHud/MangoHud.conf ]; then
+  cat $HOME/.config/MangoHud/MangoHud.conf > $MANGOHUD_CONFIGFILE
+fi
 # Steam will overwrite the config file, we must remove write permission here
 chmod -w $MANGOHUD_CONFIGFILE
 export MANGOHUD_CONFIG="read_cfg"
+
+steamos-select-branch() {
+  :
+}
+
+steamos-session-select() {
+  steam -shutdown
+}
+
+export -f steamos-session-select steamos-select-branch
 
 ulimit -n 524288
 
@@ -99,11 +120,25 @@ ulimit -n 524288
   --fullscreen \
   --default-touch-mode 4 \
   --mangoapp \
+  --cursor $CURSOR_FILE \
+  --xwayland-count 2 \
   --steam \
   -- \
   $CLIENTCMD
 
-hyprctl reload
+# Catch reboot and powerof sentinels here
+if [[ -e "$REBOOT_SENTINEL" ]]; then
+  rm -f "$REBOOT_SENTINEL"
+  reboot
+fi
+if [[ -e "$SHUTDOWN_SENTINEL" ]]; then
+  rm -f "$SHUTDOWN_SENTINEL"
+  poweroff
+fi
+
+if (( $_HYPRCTL_OFF )); then
+  hyprctl reload
+fi
 if (( $_WPAPERD_MANUALLY_CLOSED )); then
   systemd-run --user --unit wpaperd-hypr /usr/bin/wpaperd
 fi
